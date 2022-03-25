@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>5.世界人口分部-几何体合并</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+  </style>
+</head>
+
+<body>
+  <script type="module">
+    import * as THREE from '/three.js-r123/build/three.module.js';
+    // 引入Three.js扩展库
+    import { OrbitControls } from '/three.js-r123/examples/jsm/controls/OrbitControls.js';
+    import { ExtrudeMesh, createLine } from '/js/fn.js';
+    // 几何体辅助合并工具
+    import { BufferGeometryUtils } from '/three.js-r123/examples/jsm/utils/BufferGeometryUtils.js';
+    var scene = new THREE.Scene();
+    //three.js文件加载类FileLoader：封装了XMLHttpRequest
+    var loader = new THREE.FileLoader();
+    loader.setResponseType('json');
+    // 组对象mapGroup是所有国家边界Line模型的父对象
+    var mapGroup = new THREE.Group();
+    scene.add(mapGroup);
+    var lineGroup = new THREE.Group();//边界线组
+    mapGroup.add(lineGroup);
+    var meshGroup = new THREE.Group();//轮廓Mesh组
+    mapGroup.add(meshGroup);
+    var stretchHeight = 2;//地图行政区拉伸高度
+    lineGroup.position.z = stretchHeight + stretchHeight * 0.1;//适当偏移解决深度冲突
+    loader.load('/json/world.json', function (data) {
+      data.features.forEach(function (area) {
+        if (area.geometry.type === "Polygon") {
+          area.geometry.coordinates = [area.geometry.coordinates];
+        }
+        lineGroup.add(createLine(area.geometry.coordinates));
+        meshGroup.add(ExtrudeMesh(area.geometry.coordinates, stretchHeight));
+      });
+
+      // 地图底部边界线
+      var lineGroup2 = lineGroup.clone();
+      mapGroup.add(lineGroup2);
+      lineGroup2.position.z = -stretchHeight * 0.1;//适当偏移解决深度冲突
+    })
+
+    //几何体共享-渲染时间短
+    loader.load('/json/users.json', function (data) {
+      var coord = data.population;//所有经纬度坐标和对应需要可视化的数值
+      var geoArr = []; //所有几何体集合
+      var Max = 500//设置一个基准值,以要可视化的数据最大值为准即可
+      var color1 = new THREE.Color(0x229977);
+      var color2 = new THREE.Color(0x29ee77);//最大数值对应柱子颜色
+      for (var i = 0; i < coord.length; i++) {
+        var height = coord[i][2];//经纬度coord[i][0], coord[i][1]对应数值
+        var pillarHeight = height / 100;
+        var geometry = new THREE.BoxBufferGeometry(0.3, 0.3, pillarHeight);
+        geometry.translate(coord[i][0], coord[i][1], pillarHeight / 2);
+        //颜色
+        var color = color1.clone().lerp(color2.clone(), height / Max);
+        var colorArr = [];//几何体所有顶点颜色数据
+        // 每个顶点都设置同样的颜色
+        var peaks = geometry.attributes.position.count;
+        for (var j = 0; j < peaks; j++) {
+          colorArr.push(color.r, color.g, color.b);
+        }
+        var colorAttribute = new THREE.BufferAttribute(new Float32Array(colorArr), 3);
+        //设置几何体 顶点颜色数据
+        geometry.attributes.color = colorAttribute;
+        geoArr.push(geometry);
+      }
+      // 所有几何体合并为一个几何体
+      var BfferGeometry = BufferGeometryUtils.mergeBufferGeometries(geoArr);
+      //颜色渐变处理
+      var pos = BfferGeometry.attributes.position;
+      var col = BfferGeometry.attributes.color;
+      var mergeCounts = pos.count;
+      for (var i = 0; i < mergeCounts; i++) {
+        if (pos.getZ(i) < 0.0001) {//柱子底部点
+          col.setX(i, col.getX(i) * 0.0);
+          col.setY(i, col.getY(i) * 0.1);
+          col.setZ(i, col.getZ(i) * 0.1);
+        } else {//柱子顶部点
+          col.setX(i, col.getX(i) * 0.0);
+          col.setY(i, col.getY(i) * 1.0);
+          col.setZ(i, col.getZ(i) * 1.0);
+        }
+      }
+
+      var material = new THREE.MeshLambertMaterial({
+        vertexColors: THREE.VertexColors, //使用顶点颜色渲染
+      });
+      var mesh = new THREE.Mesh(BfferGeometry, material);
+      mesh.position.z = stretchHeight + 0.1;
+      scene.add(mesh);
+    })
+
+    /**
+     * 光源设置
+    */
+    // 平行光1
+    var directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    directionalLight.position.set(400, 200, 300);
+    scene.add(directionalLight);
+    // 平行光2
+    var directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.6);
+    directionalLight2.position.set(-400, -200, -300);
+    scene.add(directionalLight2);
+    //环境光
+    var ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambient);
+
+    /**
+     * 相机设置
+     */
+    var width = window.innerWidth; //窗口宽度
+    var height = window.innerHeight; //窗口高度
+    var k = width / height; //窗口宽高比
+    // var s = 200; //三维场景显示范围控制系数，系数越大，显示的范围越大
+    var s = 90;//缩小渲染渲染范围，地图尽量100%填充canvas画布
+    //创建相机对象
+    var camera = new THREE.OrthographicCamera(-s * k, s * k, s, -s, 1, 1500);
+    // camera.position.set(200, 300, 200); //设置相机位置
+    // camera.position.set(0, 0, 200); //沿着z轴观察
+    camera.position.set(0, -100, 200); //沿着z轴观察
+    camera.lookAt(0, 0, 0); //指向中国地图的几何中心
+    /**
+     * 创建渲染器对象
+     */
+    var renderer = new THREE.WebGLRenderer();
+    renderer.setSize(width, height); //设置渲染区域尺寸
+    // renderer.setClearColor(0xb9d3ff, 1); //设置背景颜色
+    document.body.appendChild(renderer.domElement); //body元素中插入canvas对象
+
+    // 渲染函数
+    function render() {
+      renderer.render(scene, camera); //执行渲染操作
+      requestAnimationFrame(render); //请求再次执行渲染函数render，渲染下一帧
+    }
+    render();
+    //创建控件对象  控件可以监听鼠标的变化，改变相机对象的属性
+    var controls = new OrbitControls(camera, renderer.domElement);
+  </script>
+</body>
+
+</html>

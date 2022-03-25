@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>地图选中效果</title>
+    <style>
+        body {
+            margin: 0;
+        }
+    </style>
+</head>
+
+<body>
+    <script src="/js/tween.js"></script>
+    <script type="module">
+        // 引入three.js文件
+        import * as THREE from '/three.js-r123/build/three.module.js';
+        // 引入Three.js扩展库
+        import { OrbitControls } from '/three.js-r123/examples/jsm/controls/OrbitControls.js';
+        import { createLine, ExtrudeMesh, shapeMesh, ExtrudeMeshTest , tag, labelRenderer} from '/js/fn.js';
+        /**
+      * 创建场景对象Scene
+      */
+        const cameraDefaultPos = { x: 103, y: 0.5, z: 48 }
+        var scene = new THREE.Scene();
+        //three.js文件加载类FileLoader：封装了XMLHttpRequest
+        var loader = new THREE.FileLoader();
+        loader.setResponseType('json');
+        // 组对象mapGroup是所有国家边界Line模型的父对象
+        var mapGroup = new THREE.Group();
+        const provActHeight = 300;
+        scene.add(mapGroup);
+        let objList = [];
+        loader.load('/json/ChinaLight.json', function (data) {
+            // 访问所有国家边界坐标数据：data.features
+            data.features.forEach(function (area) {
+                var newGroup = new THREE.Group();
+                // "Polygon"：国家area有一个封闭轮廓
+                //"MultiPolygon"：国家area有多个封闭轮廓
+                var newGroup = new THREE.Group();
+                if (area.geometry.type === "Polygon") {
+                    // 把"Polygon"和"MultiPolygon"的geometry.coordinates数据结构处理为一致
+                    area.geometry.coordinates = [area.geometry.coordinates];
+                }
+                // 解析所有封闭轮廓边界坐标area.geometry.coordinates
+                let province = ExtrudeMeshTest(area.geometry.coordinates, 2)
+                province.payload = { key: "province" }
+                calcGeomCenter(province);
+                newGroup.add(province);//拉伸
+                objList.push(province)
+                let line = createLine(area.geometry.coordinates)
+                line.position.z = 2;
+                let center = area?.properties;
+                center?.cp?.length && newGroup.add(tag(center?.name, center?.cp[0], center?.cp[1], 2));
+                newGroup.add(line);
+                mapGroup.add(newGroup)
+                
+            });
+        })
+
+        // 平行光1
+        var directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(0, 1, 1)
+        scene.add(directionalLight);
+
+        // // 平行光2
+        // var directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.6);
+        // directionalLight2.position.set(-400, -200, -300);
+        // scene.add(directionalLight2);
+
+        //环境光
+        var ambient = new THREE.AmbientLight(0xffffff, 0.2);
+        scene.add(ambient);
+
+        /**
+         * 相机设置
+         */
+        var width = window.innerWidth; //窗口宽度
+        var height = window.innerHeight; //窗口高度
+        var k = width / height; //窗口宽高比
+        var s = 30;//缩小渲染渲染范围，地图尽量100%填充canvas画布
+        //创建相机对象
+        // var camera = new THREE.OrthographicCamera(-s * k, s * k, s, -s, 1, 1000);
+        var camera = new THREE.PerspectiveCamera(50, k, 0.1, 1000);
+        const { x, y, z } = cameraDefaultPos
+        camera.position.set(x, y, z);
+        camera.lookAt(104, 35, 0)
+        /**
+         * 创建渲染器对象
+         */
+        var renderer = new THREE.WebGLRenderer({
+            antialias: true, //开启锯齿
+        });
+        renderer.setSize(width, height); //设置渲染区域尺寸
+        document.body.appendChild(renderer.domElement); //body元素中插入canvas对象
+
+        // 渲染函数
+        function render() {
+            TWEEN.update();
+            labelRenderer.render(scene, camera);
+            renderer.render(scene, camera); //执行渲染操作
+            requestAnimationFrame(render); //请求再次执行渲染函数render，渲染下一帧
+            // console.log(camera.position)
+        }
+        render();
+        //创建控件对象  控件可以监听鼠标的变化，改变相机对象的属性
+        // 旋转、缩放用于代码调试
+
+        // var controls = new OrbitControls(camera, renderer.domElement);
+        // controls.target.set(104, 35, 0);
+        // controls.update();//update()函数内会执行camera.lookAt(controls.target)
+
+        // 计算几何中心
+        function calcGeomCenter(mesh) {
+            mesh.geometry.computeBoundingBox();
+            const { max, min } = mesh.geometry.boundingBox;
+            const { x: maxX, y: maxY } = max;
+            const { x: minX, y: minY } = min;
+            const geomCenter = { x: (maxX + minX) / 2, y: (maxY + minY) / 2 };
+            mesh.payload.geomCenter = geomCenter;
+            mesh.payload.diffX = maxX - minX;
+            mesh.payload.diffY = maxY - minY;
+        }
+
+        function provinceMove(mesh, type) {
+            let target = type === 'up' ? provActHeight : 0
+            let { z } = mesh.position
+            const tween = new TWEEN.Tween({ z })
+                .to({ z: target }, 1000)
+                .easing(TWEEN.Easing.Sinusoidal.InOut)
+                .onUpdate((obj) => {
+                    mesh.position.z = obj.z;
+
+                })
+            tween.start();
+        }
+
+        function cameraMoveTo(x, y, z) {
+            const tween = new TWEEN.Tween(camera.position)
+                .to({ x, y, z }, 1000)
+                .easing(TWEEN.Easing.Sinusoidal.InOut)
+                .onUpdate((obj) => {
+                    const { x, y, z } = obj
+                    camera.position.set(x, y, z)
+                })
+            tween.start()
+        }
+
+        /**
+        * 射线投射器`Raycaster`的射线拾取选中网格模型对象函数choose()
+        * 选中的网格模型变为半透明效果
+        */
+        var prev = null;//标记鼠标拾取到的mesh
+        function choose(event) {
+            if (prev) {
+                const { x, y, z } = cameraDefaultPos
+                cameraMoveTo(x, y, z)
+                prev.material.color.set(0x1479b1);//恢复原来颜色
+                provinceMove(prev.parent, 'down')
+            }
+            var Sx = event.clientX; //鼠标单击位置横坐标
+            var Sy = event.clientY; //鼠标单击位置纵坐标
+            //屏幕坐标转WebGL标准设备坐标
+            var x = (Sx / window.innerWidth) * 2 - 1; //WebGL标准设备横坐标
+            var y = -(Sy / window.innerHeight) * 2 + 1; //WebGL标准设备纵坐标
+            //创建一个射线投射器`Raycaster`
+            var raycaster = new THREE.Raycaster();
+            //通过鼠标单击位置标准设备坐标和相机参数计算射线投射器`Raycaster`的射线属性.ray
+            raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+            //返回.intersectObjects()参数中射线选中的网格模型对象
+            // 未选中对象返回空数组[],选中一个数组1个元素，选中两个数组两个元素
+            var intersects = raycaster.intersectObjects(objList, true);
+            console.log("射线器返回的对象", intersects);
+            if (intersects.length > 0) {
+                const mesh = intersects[0].object
+                const { x, y, z } = cameraDefaultPos
+                const { key } = mesh.payload
+                if (key === "province") {
+                    mesh.material.setValues({ color: 0x00a5d1 });
+                    provinceMove(mesh.parent, "up")
+                    prev = mesh;
+                    // 相机移动
+                    const { geomCenter, diffX } = mesh.payload;
+                    if (!geomCenter) return;
+                    const { x, y } = geomCenter;
+                    const cameraOffset = Math.max(diffX * 0.85, 10);
+                    cameraMoveTo(x, y - cameraOffset, provActHeight + cameraOffset + 10)
+                }
+            }
+        }
+        addEventListener('click', choose); // 监听窗口鼠标单击事件
+    </script>
+</body>
+
+</html>
